@@ -21,14 +21,15 @@ def _get_client_config() -> dict:
     """Load OAuth client config from Streamlit secrets or local file."""
     try:
         import streamlit as st
-        if "google_oauth" in st.secrets:
+        # Changed from "google_oauth" to "web" to match your secrets layout
+        if "web" in st.secrets:
             return {
                 "web": {
-                    "client_id": st.secrets["google_oauth"]["client_id"],
-                    "client_secret": st.secrets["google_oauth"]["client_secret"],
+                    "client_id": st.secrets["web"]["client_id"],
+                    "client_secret": st.secrets["web"]["client_secret"],
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [st.secrets["google_oauth"]["redirect_uri"]],
+                    "redirect_uris": ["https://smart-scheduler-agent-gbgjyqrickkdghcqiwb8q.streamlit.app/oauth2callback"],
                 }
             }
     except Exception:
@@ -41,8 +42,8 @@ def get_redirect_uri() -> str:
     """Get the correct redirect URI (local or deployed)."""
     try:
         import streamlit as st
-        if "google_oauth" in st.secrets:
-            return st.secrets["google_oauth"]["redirect_uri"]
+        if "web" in st.secrets:
+            return "https://smart-scheduler-agent-gbgjyqrickkdghcqiwb8q.streamlit.app/oauth2callback"
     except Exception:
         pass
     return "http://localhost:8501"
