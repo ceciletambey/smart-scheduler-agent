@@ -2,10 +2,12 @@
 Web OAuth flow with room support.
 The room_id is carried through OAuth via the 'state' parameter.
 """
+
 import os
 import json
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.freebusy",
@@ -14,22 +16,22 @@ SCOPES = [
     "openid",
 ]
 
-# Exact deployed URL (copied from the browser address bar), root only.
-DEPLOYED_URL = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
+# CRITICAL: copy this EXACTLY from your browser address bar (no trailing slash, no /oauth2callback)
+REDIRECT_URI = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
 
 
 def _get_client_config() -> dict:
     """Load OAuth client config from Streamlit secrets or local file."""
     try:
         import streamlit as st
-        if "google_oauth" in st.secrets:
+        if "web" in st.secrets:
             return {
                 "web": {
-                    "client_id": st.secrets["google_oauth"]["client_id"],
-                    "client_secret": st.secrets["google_oauth"]["client_secret"],
+                    "client_id": st.secrets["web"]["client_id"],
+                    "client_secret": st.secrets["web"]["client_secret"],
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [DEPLOYED_URL],
+                    "redirect_uris": [REDIRECT_URI],
                 }
             }
     except Exception:
@@ -42,8 +44,8 @@ def get_redirect_uri() -> str:
     """Get the correct redirect URI (local or deployed)."""
     try:
         import streamlit as st
-        if "google_oauth" in st.secrets:
-            return DEPLOYED_URL
+        if "web" in st.secrets:
+            return REDIRECT_URI
     except Exception:
         pass
     return "http://localhost:8501"
