@@ -27,6 +27,19 @@ from rooms import (
 from calendar_client import get_freebusy, create_event
 from scheduler import parse_busy_slots, find_common_free_slots
 
+import streamlit as st
+
+# DEBUG TEMPORAIRE - à retirer après
+with st.sidebar:
+    st.write("DEBUG secrets:")
+    try:
+        has_web = "web" in st.secrets
+        has_go = "google_oauth" in st.secrets
+        st.write("'web' in secrets:", has_web)
+        st.write("'google_oauth' in secrets:", has_go)
+    except Exception as e:
+        st.write("No secrets file (normal in local):", str(e)[:50])
+
 
 # ============================================================
 # Config
