@@ -403,3 +403,22 @@ st.markdown("---")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+
+import streamlit as st
+
+st.title("Smart Scheduler Agent 🤖")
+
+# --- TEMPORARY BEDTIME BYPASS ---
+# Comment out your google oauth flow lines for tonight!
+# Instead, use a simple text password to test it on the live web:
+
+password = st.text_input("Enter developer password to access:", type="password")
+
+if password == "1234":
+    st.success("Authenticated successfully! (Local OAuth bypassed for web deployment)")
+    
+    # Put your main app logic here (the calendar rendering, scheduling views, etc.)
+    st.write("Welcome to your Smart Scheduler dashboard!")
+    
+else:
+    st.info("Please enter your temporary password to test the site live.")
