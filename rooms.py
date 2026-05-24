@@ -12,7 +12,6 @@ from google.oauth2.credentials import Credentials
 
 
 def _get_supabase():
-    """Create a Supabase client from env vars or Streamlit secrets."""
     url = None
     key = None
     try:
@@ -21,13 +20,11 @@ def _get_supabase():
         key = st.secrets.get("SUPABASE_KEY")
     except Exception:
         pass
-
     if not url or not key:
         from dotenv import load_dotenv
         load_dotenv()
         url = os.getenv("SUPABASE_URL")
         key = os.getenv("SUPABASE_KEY")
-
     from supabase import create_client
     return create_client(url, key)
 

@@ -2,12 +2,10 @@
 Web OAuth flow with room support.
 The room_id is carried through OAuth via the 'state' parameter.
 """
-
 import os
 import json
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
-
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.freebusy",
@@ -16,20 +14,22 @@ SCOPES = [
     "openid",
 ]
 
+# Exact deployed URL (copied from the browser address bar), root only.
+DEPLOYED_URL = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
+
 
 def _get_client_config() -> dict:
     """Load OAuth client config from Streamlit secrets or local file."""
     try:
         import streamlit as st
-        # Changed from "google_oauth" to "web" to match your secrets layout
-        if "web" in st.secrets:
+        if "google_oauth" in st.secrets:
             return {
                 "web": {
-                    "client_id": st.secrets["web"]["client_id"],
-                    "client_secret": st.secrets["web"]["client_secret"],
+                    "client_id": st.secrets["google_oauth"]["client_id"],
+                    "client_secret": st.secrets["google_oauth"]["client_secret"],
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": ["https://smart-scheduler-agent-gbgjyqrickkdghcqiwb8q.streamlit.app/oauth2callback"],
+                    "redirect_uris": [DEPLOYED_URL],
                 }
             }
     except Exception:
@@ -42,8 +42,8 @@ def get_redirect_uri() -> str:
     """Get the correct redirect URI (local or deployed)."""
     try:
         import streamlit as st
-        if "web" in st.secrets:
-            return "https://smart-scheduler-agent-gbgjyqrickkdghcqiwb8q.streamlit.app/oauth2callback"
+        if "google_oauth" in st.secrets:
+            return DEPLOYED_URL
     except Exception:
         pass
     return "http://localhost:8501"
@@ -67,7 +67,7 @@ def get_authorization_url(room_id: str) -> str:
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
-        state=room_id,  # carry the room through the flow
+        state=room_id,
     )
     return auth_url
 
