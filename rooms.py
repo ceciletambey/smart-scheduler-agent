@@ -25,6 +25,10 @@ def _get_supabase():
         load_dotenv()
         url = os.getenv("SUPABASE_URL")
         key = os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError(
+            "Supabase credentials missing. Add SUPABASE_URL and SUPABASE_KEY to your Streamlit secrets."
+        )
     from supabase import create_client
     return create_client(url, key)
 

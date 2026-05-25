@@ -31,6 +31,10 @@ if not GEMINI_KEY:
     except Exception:
         GEMINI_KEY = None
 
+if not GEMINI_KEY:
+    st.error("**Missing GEMINI_API_KEY** — add it to your Streamlit secrets (Settings → Secrets).")
+    st.stop()
+
 client = genai.Client(api_key=GEMINI_KEY)
 LOCAL_TZ = pytz.timezone("Europe/Madrid")
 
@@ -228,7 +232,11 @@ def build_chat():
 
 
 if "chat" not in st.session_state:
-    st.session_state.chat = build_chat()
+    try:
+        st.session_state.chat = build_chat()
+    except Exception as e:
+        st.error(f"**Could not start Gemini chat:** {e}")
+        st.stop()
 
 
 # ============================================================
