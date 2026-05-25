@@ -8,7 +8,9 @@ import os
 from datetime import datetime, timedelta, timezone
 import pytz
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+
+client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 from oauth_web import (
     get_authorization_url,
