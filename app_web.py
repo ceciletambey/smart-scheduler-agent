@@ -1,16 +1,9 @@
-"""
-Smart Scheduler - Web app with rooms + per-account room history.
-Access control (Option B): you must sign in with Google before entering a room.
-Each room is a team where members find common availability privately.
-"""
-
 import os
 from datetime import datetime, timedelta, timezone
 import pytz
 import streamlit as st
 from google import genai
-
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+from google.genai import types
 
 from oauth_web import (
     get_authorization_url,
@@ -29,11 +22,6 @@ from rooms import (
 from calendar_client import get_freebusy, create_event
 from scheduler import parse_busy_slots, find_common_free_slots
 
-
-# ============================================================
-# Config
-# ============================================================
-
 from dotenv import load_dotenv
 load_dotenv()
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -43,7 +31,7 @@ if not GEMINI_KEY:
     except Exception:
         GEMINI_KEY = None
 
-genai.configure(api_key=GEMINI_KEY)
+client = genai.Client(api_key=GEMINI_KEY)
 LOCAL_TZ = pytz.timezone("Europe/Madrid")
 
 st.set_page_config(page_title="Smart Scheduler", layout="wide", initial_sidebar_state="expanded")
@@ -230,10 +218,13 @@ Times are Central European Time. Format slots as a bulleted list with day and ti
 
 
 def build_chat():
-    model = genai.GenerativeModel(model_name="gemini-2.5-flash",
-                                  system_instruction=SYSTEM_PROMPT,
-                                  tools=[find_meeting_slots, schedule_meeting])
-    return model.start_chat(enable_automatic_function_calling=True)
+    return client.chats.create(
+        model="gemini-2.5-flash",
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            tools=[find_meeting_slots, schedule_meeting],
+        ),
+    )
 
 
 if "chat" not in st.session_state:
