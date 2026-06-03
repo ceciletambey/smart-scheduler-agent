@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 import pytz
 import streamlit as st
+import streamlit.components.v1 as components
 from google import genai
 from google.genai import types
 
@@ -259,7 +260,7 @@ def render_landing():
         st.markdown(f'<div class="room-code">{rid}</div>', unsafe_allow_html=True)
         st.caption(f"{get_room_name(rid)} - Sign in with Google to join this room.")
         auth_url = get_authorization_url(rid)
-        st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_self">'
+        st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">'
                     f'Sign in with Google to join</a></div>', unsafe_allow_html=True)
         st.stop()
 
@@ -276,8 +277,8 @@ def render_landing():
             code = create_room(room_name or "Untitled")
             # send straight into OAuth for this new room
             auth_url = get_authorization_url(code)
-            st.markdown(f'<meta http-equiv="refresh" content="0;url={auth_url}">', unsafe_allow_html=True)
-            st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_self">'
+            st.markdown(f'<script>window.top.location.href = "{auth_url}";</script>', unsafe_allow_html=True)
+            st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">'
                         f'Continue to Google sign-in</a></div>', unsafe_allow_html=True)
             st.stop()
 
@@ -288,8 +289,8 @@ def render_landing():
             jc = join_code.strip().upper()
             if room_exists(jc):
                 auth_url = get_authorization_url(jc)
-                st.markdown(f'<meta http-equiv="refresh" content="0;url={auth_url}">', unsafe_allow_html=True)
-                st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_self">'
+                st.markdown(f'<script>window.top.location.href = "{auth_url}";</script>', unsafe_allow_html=True)
+                st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">'
                             f'Continue to Google sign-in</a></div>', unsafe_allow_html=True)
                 st.stop()
             else:
@@ -381,7 +382,28 @@ st.markdown(f'<div class="tagline">Room <strong>{room_id}</strong> - {len(member
             'Ask the agent to find a time that works for everyone.</div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# Input form FIRST (stays at the top, doesn't move when chat grows)
+# Chat history (newest at bottom, like a chat app)
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# Auto-scroll to latest message after each rerun
+components.html("""
+<script>
+  var attempts = 0;
+  function scrollDown() {
+    var main = window.parent.document.querySelector('section.main');
+    if (main) { main.scrollTop = main.scrollHeight; }
+    attempts++;
+    if (attempts < 8) setTimeout(scrollDown, 100);
+  }
+  scrollDown();
+</script>
+""", height=0)
+
+st.markdown("---")
+
+# Input form at the bottom
 st.markdown('<div class="section-label">Ask the Scheduler</div>', unsafe_allow_html=True)
 with st.form(key="agent_form", clear_on_submit=True):
     prompt = st.text_input("Your request", placeholder="e.g. find 30 minutes this week",
@@ -397,10 +419,3 @@ if submitted and prompt:
             answer = f"Error: {e}"
     st.session_state.messages.append({"role": "assistant", "content": answer})
     st.rerun()
-
-st.markdown("---")
-
-# Chat history (newest at the bottom, below the fixed input)
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
