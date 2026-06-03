@@ -17,9 +17,6 @@ from rooms import (
     get_room_name,
     add_member,
     get_room_members,
-    get_room_members_with_roles,
-    check_is_admin,
-    set_admin,
     remove_member,
     delete_room,
     get_rooms_for_email,
@@ -213,8 +210,7 @@ if "code" in st.query_params:
         email = get_user_email_from_credentials(creds)
         st.session_state.current_user = email
         if state_room and room_exists(state_room):
-            is_first = len(get_room_members(state_room)) == 0
-            add_member(state_room, email, creds, is_admin=is_first)
+            add_member(state_room, email, creds)
             st.session_state.room_id = state_room
             st.session_state.pending_room = None
         st.query_params.clear()
@@ -408,24 +404,14 @@ with st.sidebar:
     st.caption(f"{get_room_name(room_id)} - Share this code to invite others")
 
     st.markdown('<div class="section-label">Members</div>', unsafe_allow_html=True)
-    current_is_admin = check_is_admin(room_id, st.session_state.current_user)
-    members_with_roles = get_room_members_with_roles(room_id)
-    if members_with_roles:
-        for m in members_with_roles:
-            email = m["email"]
-            member_is_admin = m.get("is_admin", False)
-            label = f"👑 {email}" if member_is_admin else email
+    if members:
+        for email in members:
             c1, c2 = st.columns([5, 1])
             with c1:
-                st.markdown(f'<div class="participant-card">{label}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="participant-card">{email}</div>', unsafe_allow_html=True)
             with c2:
-                can_remove = current_is_admin and email != st.session_state.current_user
-                if can_remove and st.button("x", key=f"rm_{email}"):
+                if st.button("x", key=f"rm_{email}"):
                     remove_member(room_id, email)
-                    st.rerun()
-            if current_is_admin and not member_is_admin:
-                if st.button(f"Make admin", key=f"adm_{email}", use_container_width=True):
-                    set_admin(room_id, email, True)
                     st.rerun()
     else:
         st.markdown('<div class="participant-card-empty">No members yet</div>', unsafe_allow_html=True)

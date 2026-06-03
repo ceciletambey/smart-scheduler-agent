@@ -69,12 +69,12 @@ def get_room_name(room_id: str) -> str:
     return "Unknown"
 
 
-def add_member(room_id: str, email: str, creds: Credentials, is_admin: bool = False):
+def add_member(room_id: str, email: str, creds: Credentials):
     """Add (or update) a member's OAuth token in a room."""
     sb = _get_supabase()
     token_json = creds.to_json()
     sb.table("members").upsert(
-        {"room_id": room_id, "email": email, "token_json": token_json, "is_admin": is_admin},
+        {"room_id": room_id, "email": email, "token_json": token_json},
         on_conflict="room_id,email",
     ).execute()
 
@@ -84,28 +84,6 @@ def get_room_members(room_id: str) -> list[str]:
     sb = _get_supabase()
     result = sb.table("members").select("email").eq("room_id", room_id).execute()
     return [row["email"] for row in result.data]
-
-
-def get_room_members_with_roles(room_id: str) -> list[dict]:
-    """Return members with their admin status."""
-    sb = _get_supabase()
-    result = sb.table("members").select("email, is_admin").eq("room_id", room_id).execute()
-    return result.data
-
-
-def check_is_admin(room_id: str, email: str) -> bool:
-    """Check if a member is admin in a room."""
-    sb = _get_supabase()
-    result = sb.table("members").select("is_admin").eq("room_id", room_id).eq("email", email).execute()
-    if result.data:
-        return bool(result.data[0].get("is_admin", False))
-    return False
-
-
-def set_admin(room_id: str, email: str, is_admin: bool = True):
-    """Grant or revoke admin rights for a member."""
-    sb = _get_supabase()
-    sb.table("members").update({"is_admin": is_admin}).eq("room_id", room_id).eq("email", email).execute()
 
 
 def get_member_credentials(room_id: str, email: str) -> Credentials:
