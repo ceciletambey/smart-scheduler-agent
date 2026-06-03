@@ -310,10 +310,14 @@ def render_landing():
             st.rerun()
         st.stop()
 
-    # Otherwise: must sign in before creating/joining
-    st.markdown('<div class="section-label">Sign in to start</div>', unsafe_allow_html=True)
-    st.caption("You must sign in with your Google account to create or join a room. "
-               "This is how the agent reads your availability (free/busy only).")
+    # Already signed in but no room — skip OAuth, go straight to create/join
+    if st.session_state.current_user:
+        st.markdown(f'<div class="section-label">Welcome back</div>', unsafe_allow_html=True)
+        st.caption(f"Signed in as {st.session_state.current_user} — create or join a room to continue.")
+    else:
+        st.markdown('<div class="section-label">Sign in to start</div>', unsafe_allow_html=True)
+        st.caption("You must sign in with your Google account to create or join a room. "
+                   "This is how the agent reads your availability (free/busy only).")
 
     st.markdown("""
 <div style="display:flex;gap:2rem;margin:1.5rem 0 2rem 0;">
@@ -339,21 +343,37 @@ def render_landing():
     with col1:
         st.markdown('<div class="section-label">Create a Room</div>', unsafe_allow_html=True)
         room_name = st.text_input("Room name", placeholder="e.g. Capstone Team", key="create_name")
-        if st.button("Create Room & Sign in", use_container_width=True):
+        btn_label = "Create Room" if st.session_state.current_user else "Create Room & Sign in"
+        if st.button(btn_label, use_container_width=True):
             code = create_room(room_name or "Untitled")
-            auth_url = get_authorization_url(code)
-            st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
-            st.stop()
+            if st.session_state.current_user:
+                # Already signed in — restore creds from Supabase aren't needed for room creation
+                # just set the room and redirect
+                st.session_state.room_id = code
+                st.query_params["room"] = code
+                st.query_params["u"] = st.session_state.current_user
+                st.rerun()
+            else:
+                auth_url = get_authorization_url(code)
+                st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
+                st.stop()
 
     with col2:
         st.markdown('<div class="section-label">Join a Room</div>', unsafe_allow_html=True)
         join_code = st.text_input("Room code", placeholder="TEAM-XXXX", key="join_code")
-        if st.button("Join Room & Sign in", use_container_width=True):
+        btn_label2 = "Join Room" if st.session_state.current_user else "Join Room & Sign in"
+        if st.button(btn_label2, use_container_width=True):
             jc = join_code.strip().upper()
             if room_exists(jc):
-                auth_url = get_authorization_url(jc)
-                st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
-                st.stop()
+                if st.session_state.current_user:
+                    st.session_state.room_id = jc
+                    st.query_params["room"] = jc
+                    st.query_params["u"] = st.session_state.current_user
+                    st.rerun()
+                else:
+                    auth_url = get_authorization_url(jc)
+                    st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
+                    st.stop()
             else:
                 st.error("Room not found. Check the code.")
     st.stop()
@@ -445,11 +465,19 @@ with st.sidebar:
         with y:
             if st.button("Yes, delete", use_container_width=True, type="primary"):
                 delete_room(room_id)
-                st.session_state.room_id = None
+                st.session_state.confirm_delete = False
                 st.session_state.messages = []
                 st.session_state.pending_room = None
-                st.session_state.confirm_delete = False
-                st.query_params.clear()
+                # Stay logged in — switch to another room if available
+                remaining = [r for r in get_rooms_for_email(st.session_state.current_user) if r["id"] != room_id]
+                if remaining:
+                    st.session_state.room_id = remaining[0]["id"]
+                    st.query_params["room"] = remaining[0]["id"]
+                    st.query_params["u"] = st.session_state.current_user
+                else:
+                    st.session_state.room_id = None
+                    st.query_params.clear()
+                    st.query_params["u"] = st.session_state.current_user
                 st.rerun()
         with n:
             if st.button("Cancel", use_container_width=True):
