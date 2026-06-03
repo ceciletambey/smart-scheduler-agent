@@ -283,6 +283,12 @@ def render_landing():
         st.caption(f"{get_room_name(rid)} - Sign in with Google to join this room.")
         auth_url = get_authorization_url(rid)
         st.link_button("Sign in with Google to join", url=auth_url, use_container_width=True)
+        st.markdown("---")
+        st.caption("Don't have a room yet?")
+        if st.button("Create your own room →", use_container_width=True):
+            st.session_state.pending_room = None
+            st.query_params.clear()
+            st.rerun()
         st.stop()
 
     # Otherwise: must sign in before creating/joining
