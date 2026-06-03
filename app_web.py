@@ -141,7 +141,9 @@ if "current_user" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_room" not in st.session_state:
-    st.session_state.pending_room = None  # room the user wants to enter but must sign in first
+    st.session_state.pending_room = None
+if "restore_attempted" not in st.session_state:
+    st.session_state.restore_attempted = False
 
 
 # ============================================================
@@ -149,8 +151,51 @@ if "pending_room" not in st.session_state:
 # ============================================================
 
 url_room = st.query_params.get("room")
-if url_room and room_exists(url_room):
+if url_room and url_room != st.session_state.room_id and room_exists(url_room):
     st.session_state.pending_room = url_room
+
+
+# ============================================================
+# Restore session from localStorage (stay logged in)
+# ============================================================
+
+if (not st.session_state.current_user
+        and not st.session_state.restore_attempted
+        and "ss_restore" not in st.query_params):
+    st.session_state.restore_attempted = True
+    components.html("""
+<script>
+(function() {
+    var email = localStorage.getItem('ss_email');
+    var room  = localStorage.getItem('ss_room');
+    if (email) {
+        var url = new URL(window.parent.location.href);
+        url.searchParams.set('ss_email', email);
+        if (room) url.searchParams.set('ss_room', room);
+        url.searchParams.set('ss_restore', '1');
+        window.parent.location.replace(url.toString());
+    }
+})();
+</script>
+""", height=0)
+
+if "ss_restore" in st.query_params:
+    restored_email = st.query_params.get("ss_email", "")
+    restored_room  = st.query_params.get("ss_room", "")
+    try:
+        user_rooms = get_rooms_for_email(restored_email)
+        if restored_email and user_rooms:
+            st.session_state.current_user = restored_email
+            if restored_room and room_exists(restored_room):
+                st.session_state.room_id = restored_room
+            else:
+                st.session_state.room_id = user_rooms[0]["id"]
+    except Exception:
+        pass
+    st.query_params.clear()
+    if st.session_state.room_id:
+        st.query_params["room"] = st.session_state.room_id
+    st.rerun()
 
 
 # ============================================================
@@ -171,6 +216,13 @@ if "code" in st.query_params:
         st.query_params.clear()
         if state_room:
             st.query_params["room"] = state_room
+        # Save session to localStorage
+        components.html(f"""
+<script>
+localStorage.setItem('ss_email', '{email}');
+localStorage.setItem('ss_room', '{state_room or ""}');
+</script>
+""", height=0)
         st.rerun()
     except Exception as e:
         st.error(f"Authentication error: {e}")
@@ -370,8 +422,8 @@ with st.sidebar:
     app_url = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
     invite_link = f"{app_url}?room={room_id}"
     invite_msg = f"Hey! Join our team room on Smart Scheduler 📅\nRoom: {room_name}\n👉 {invite_link}"
-    st.text_area("Copy & send this:", value=invite_msg, height=120, key="invite_box", label_visibility="collapsed")
-    st.caption("Anyone who clicks the link signs in with Google to join automatically.")
+    st.code(invite_msg, language=None)
+    st.caption("Click the copy icon ↗ then paste in WhatsApp, email, etc.")
 
     st.markdown("---")
     cA, cB = st.columns(2)
@@ -384,6 +436,7 @@ with st.sidebar:
             st.rerun()
     with cB:
         if st.button("Leave", use_container_width=True):
+            components.html("<script>localStorage.removeItem('ss_email');localStorage.removeItem('ss_room');</script>", height=0)
             st.session_state.room_id = None
             st.session_state.messages = []
             st.session_state.pending_room = None
