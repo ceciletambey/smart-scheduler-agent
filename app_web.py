@@ -235,7 +235,7 @@ TIME MAPPING: tomorrow->1, this week->7, next week->14, this month->30 days.
 morning->9-12, afternoon->13-18, evening->16-20. weekend->include_weekends=True.
 
 After booking, share the Google Meet link. Be concise, executive-tone.
-Times are Central European Time. Format slots as a bulleted list with day and time in bold.
+Times are Central European Time. Format each slot as: **Day — from HH:MM to HH:MM** (e.g. **Tuesday 3 June — from 11:00 to 11:30**). List every slot on its own line.
 """
 
 
