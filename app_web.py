@@ -142,8 +142,24 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_room" not in st.session_state:
     st.session_state.pending_room = None
-if "restore_attempted" not in st.session_state:
-    st.session_state.restore_attempted = False
+if "confirm_delete" not in st.session_state:
+    st.session_state.confirm_delete = False
+
+
+# ============================================================
+# Stay connected: restore session from URL params
+# ============================================================
+
+if not st.session_state.current_user:
+    url_u = st.query_params.get("u", "")
+    url_r = st.query_params.get("room", "")
+    if url_u and url_r:
+        try:
+            if url_u in get_room_members(url_r):
+                st.session_state.current_user = url_u
+                st.session_state.room_id = url_r
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -153,49 +169,6 @@ if "restore_attempted" not in st.session_state:
 url_room = st.query_params.get("room")
 if url_room and url_room != st.session_state.room_id and room_exists(url_room):
     st.session_state.pending_room = url_room
-
-
-# ============================================================
-# Restore session from localStorage (stay logged in)
-# ============================================================
-
-if (not st.session_state.current_user
-        and not st.session_state.restore_attempted
-        and "ss_restore" not in st.query_params):
-    st.session_state.restore_attempted = True
-    components.html("""
-<script>
-(function() {
-    var email = localStorage.getItem('ss_email');
-    var room  = localStorage.getItem('ss_room');
-    if (email) {
-        var url = new URL(window.parent.location.href);
-        url.searchParams.set('ss_email', email);
-        if (room) url.searchParams.set('ss_room', room);
-        url.searchParams.set('ss_restore', '1');
-        window.parent.location.replace(url.toString());
-    }
-})();
-</script>
-""", height=0)
-
-if "ss_restore" in st.query_params:
-    restored_email = st.query_params.get("ss_email", "")
-    restored_room  = st.query_params.get("ss_room", "")
-    try:
-        user_rooms = get_rooms_for_email(restored_email)
-        if restored_email and user_rooms:
-            st.session_state.current_user = restored_email
-            if restored_room and room_exists(restored_room):
-                st.session_state.room_id = restored_room
-            else:
-                st.session_state.room_id = user_rooms[0]["id"]
-    except Exception:
-        pass
-    st.query_params.clear()
-    if st.session_state.room_id:
-        st.query_params["room"] = st.session_state.room_id
-    st.rerun()
 
 
 # ============================================================
@@ -216,13 +189,7 @@ if "code" in st.query_params:
         st.query_params.clear()
         if state_room:
             st.query_params["room"] = state_room
-        # Save session to localStorage
-        components.html(f"""
-<script>
-localStorage.setItem('ss_email', '{email}');
-localStorage.setItem('ss_room', '{state_room or ""}');
-</script>
-""", height=0)
+            st.query_params["u"] = email
         st.rerun()
     except Exception as e:
         st.error(f"Authentication error: {e}")
@@ -334,7 +301,7 @@ def render_landing():
         st.markdown(f'<div class="room-code">{rid}</div>', unsafe_allow_html=True)
         st.caption(f"{get_room_name(rid)} - Sign in with Google to join this room.")
         auth_url = get_authorization_url(rid)
-        st.link_button("Sign in with Google to join", url=auth_url, use_container_width=True)
+        st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">🔑 Sign in with Google to join</a></div>', unsafe_allow_html=True)
         st.markdown("---")
         st.caption("Don't have a room yet?")
         if st.button("Create your own room →", use_container_width=True):
@@ -347,6 +314,26 @@ def render_landing():
     st.markdown('<div class="section-label">Sign in to start</div>', unsafe_allow_html=True)
     st.caption("You must sign in with your Google account to create or join a room. "
                "This is how the agent reads your availability (free/busy only).")
+
+    st.markdown("""
+<div style="display:flex;gap:2rem;margin:1.5rem 0 2rem 0;">
+  <div style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;border-top:3px solid #ff0055;padding:1.25rem;border-radius:8px;">
+    <div style="color:#ff0055;font-size:0.7rem;letter-spacing:0.2em;font-weight:700;margin-bottom:0.5rem;">01</div>
+    <div style="color:#fff;font-weight:600;margin-bottom:0.4rem;">Create a room</div>
+    <div style="color:#888;font-size:0.85rem;">Sign in with Google and get a shareable room code.</div>
+  </div>
+  <div style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;border-top:3px solid #ff0055;padding:1.25rem;border-radius:8px;">
+    <div style="color:#ff0055;font-size:0.7rem;letter-spacing:0.2em;font-weight:700;margin-bottom:0.5rem;">02</div>
+    <div style="color:#fff;font-weight:600;margin-bottom:0.4rem;">Invite your team</div>
+    <div style="color:#888;font-size:0.85rem;">Share the link. Each person signs in with their own Google account.</div>
+  </div>
+  <div style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;border-top:3px solid #ff0055;padding:1.25rem;border-radius:8px;">
+    <div style="color:#ff0055;font-size:0.7rem;letter-spacing:0.2em;font-weight:700;margin-bottom:0.5rem;">03</div>
+    <div style="color:#fff;font-weight:600;margin-bottom:0.4rem;">Ask the AI</div>
+    <div style="color:#888;font-size:0.85rem;">Ask for available slots. The agent checks everyone's calendar and books it.</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -387,15 +374,30 @@ members = get_room_members(room_id)
 with st.sidebar:
     st.markdown('<div class="brand-line-small"></div>', unsafe_allow_html=True)
 
+    # Email + logout on same row
+    em_col, lo_col = st.columns([3, 1])
+    with em_col:
+        st.caption(f"👤 {st.session_state.current_user}")
+    with lo_col:
+        if st.button("↩", help="Log out", use_container_width=True):
+            st.session_state.current_user = None
+            st.session_state.room_id = None
+            st.session_state.messages = []
+            st.session_state.pending_room = None
+            st.session_state.confirm_delete = False
+            st.query_params.clear()
+            st.rerun()
+
     st.markdown('<div class="section-label">Your Rooms</div>', unsafe_allow_html=True)
-    st.caption(f"Signed in as {st.session_state.current_user}")
     my_rooms = get_rooms_for_email(st.session_state.current_user)
     for r in my_rooms:
         label = f"{r['id']} - {r.get('name') or 'Untitled'}"
         if st.button(label, key=f"switch_{r['id']}", use_container_width=True):
             st.session_state.room_id = r["id"]
             st.session_state.messages = []
+            st.session_state.chat = build_chat()
             st.query_params["room"] = r["id"]
+            st.query_params["u"] = st.session_state.current_user
             st.rerun()
     st.markdown("---")
 
@@ -426,32 +428,33 @@ with st.sidebar:
     st.caption("Click the copy icon ↗ then paste in WhatsApp, email, etc.")
 
     st.markdown("---")
-    cA, cB = st.columns(2)
-    with cA:
-        if st.button("New room", use_container_width=True):
-            st.session_state.room_id = None
-            st.session_state.messages = []
-            st.session_state.pending_room = None
-            st.query_params.clear()
-            st.rerun()
-    with cB:
-        if st.button("Log out", use_container_width=True):
-            components.html("<script>localStorage.removeItem('ss_email');localStorage.removeItem('ss_room');</script>", height=0)
-            st.session_state.current_user = None
-            st.session_state.room_id = None
-            st.session_state.messages = []
-            st.session_state.pending_room = None
-            st.session_state.restore_attempted = False
-            st.query_params.clear()
-            st.rerun()
-
-    if st.button("🗑 Delete this room", use_container_width=True, type="secondary"):
-        delete_room(room_id)
+    if st.button("+ New room", use_container_width=True):
         st.session_state.room_id = None
         st.session_state.messages = []
         st.session_state.pending_room = None
         st.query_params.clear()
         st.rerun()
+
+    if not st.session_state.confirm_delete:
+        if st.button("🗑 Delete this room", use_container_width=True, type="secondary"):
+            st.session_state.confirm_delete = True
+            st.rerun()
+    else:
+        st.warning("Delete **" + get_room_name(room_id) + "**? This cannot be undone.")
+        y, n = st.columns(2)
+        with y:
+            if st.button("Yes, delete", use_container_width=True, type="primary"):
+                delete_room(room_id)
+                st.session_state.room_id = None
+                st.session_state.messages = []
+                st.session_state.pending_room = None
+                st.session_state.confirm_delete = False
+                st.query_params.clear()
+                st.rerun()
+        with n:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.confirm_delete = False
+                st.rerun()
 
     st.markdown("""
         <div class="privacy-note">
@@ -465,8 +468,13 @@ with st.sidebar:
 # Main area
 st.markdown('<div class="brand-line"></div>', unsafe_allow_html=True)
 st.markdown("# Smart Scheduler")
-st.markdown(f'<div class="tagline">Room <strong>{room_id}</strong> - {len(members)} member(s) connected. '
+st.markdown(f'<div class="tagline">Room <strong>{room_id}</strong> · {len(members)} member(s) connected. '
             'Ask the agent to find a time that works for everyone.</div>', unsafe_allow_html=True)
+# Keep URL in sync so stay-connected works on refresh
+if st.query_params.get("u") != st.session_state.current_user:
+    st.query_params["u"] = st.session_state.current_user
+if st.query_params.get("room") != room_id:
+    st.query_params["room"] = room_id
 st.markdown("---")
 
 # Chat history (newest at bottom, like a chat app)
