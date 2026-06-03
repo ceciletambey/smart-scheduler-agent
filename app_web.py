@@ -360,10 +360,12 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown('<div class="section-label">Invite Others</div>', unsafe_allow_html=True)
-    auth_url = get_authorization_url(room_id)
-    st.markdown(f'<div class="connect-btn"><a href="{auth_url}" target="_self">Re-connect Google</a></div>',
-                unsafe_allow_html=True)
-    st.caption("Share the room code above. Others sign in with Google to join.")
+    room_name = get_room_name(room_id)
+    app_url = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
+    invite_link = f"{app_url}?room={room_id}"
+    invite_msg = f"Hey! Join our team room on Smart Scheduler 📅\nRoom: {room_name}\n👉 {invite_link}"
+    st.text_area("Copy & send this:", value=invite_msg, height=120, key="invite_box", label_visibility="collapsed")
+    st.caption("Anyone who clicks the link signs in with Google to join automatically.")
 
     st.markdown("---")
     cA, cB = st.columns(2)
