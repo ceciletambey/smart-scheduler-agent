@@ -421,7 +421,7 @@ with st.sidebar:
     room_name = get_room_name(room_id)
     app_url = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
     invite_link = f"{app_url}?room={room_id}"
-    invite_msg = f"Hey! Join our team room on Smart Scheduler 📅\nRoom: {room_name}\n👉 {invite_link}"
+    invite_msg = f"Hey! Join our team room on Smart Scheduler 📅\nRoom: {room_name} • Code: {room_id}\n👉 {invite_link}"
     st.code(invite_msg, language=None)
     st.caption("Click the copy icon ↗ then paste in WhatsApp, email, etc.")
 
