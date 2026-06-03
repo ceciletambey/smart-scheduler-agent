@@ -435,11 +435,13 @@ with st.sidebar:
             st.query_params.clear()
             st.rerun()
     with cB:
-        if st.button("Leave", use_container_width=True):
+        if st.button("Log out", use_container_width=True):
             components.html("<script>localStorage.removeItem('ss_email');localStorage.removeItem('ss_room');</script>", height=0)
+            st.session_state.current_user = None
             st.session_state.room_id = None
             st.session_state.messages = []
             st.session_state.pending_room = None
+            st.session_state.restore_attempted = False
             st.query_params.clear()
             st.rerun()
 
