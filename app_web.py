@@ -260,8 +260,7 @@ def render_landing():
         st.markdown(f'<div class="room-code">{rid}</div>', unsafe_allow_html=True)
         st.caption(f"{get_room_name(rid)} - Sign in with Google to join this room.")
         auth_url = get_authorization_url(rid)
-        st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">'
-                    f'Sign in with Google to join</a></div>', unsafe_allow_html=True)
+        st.link_button("Sign in with Google to join", url=auth_url, use_container_width=True)
         st.stop()
 
     # Otherwise: must sign in before creating/joining
@@ -275,11 +274,8 @@ def render_landing():
         room_name = st.text_input("Room name", placeholder="e.g. Capstone Team", key="create_name")
         if st.button("Create Room & Sign in", use_container_width=True):
             code = create_room(room_name or "Untitled")
-            # send straight into OAuth for this new room
             auth_url = get_authorization_url(code)
-            st.markdown(f'<script>window.top.location.href = "{auth_url}";</script>', unsafe_allow_html=True)
-            st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">'
-                        f'Continue to Google sign-in</a></div>', unsafe_allow_html=True)
+            st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
             st.stop()
 
     with col2:
@@ -289,9 +285,7 @@ def render_landing():
             jc = join_code.strip().upper()
             if room_exists(jc):
                 auth_url = get_authorization_url(jc)
-                st.markdown(f'<script>window.top.location.href = "{auth_url}";</script>', unsafe_allow_html=True)
-                st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">'
-                            f'Continue to Google sign-in</a></div>', unsafe_allow_html=True)
+                st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
                 st.stop()
             else:
                 st.error("Room not found. Check the code.")
