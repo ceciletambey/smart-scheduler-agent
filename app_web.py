@@ -18,6 +18,7 @@ from rooms import (
     add_member,
     get_room_members,
     remove_member,
+    delete_room,
     get_rooms_for_email,
 )
 from calendar_client import get_freebusy, create_event
@@ -185,13 +186,20 @@ def find_meeting_slots(duration_minutes: int = 60, days_ahead: int = 7,
         busy_by_person = parse_busy_slots(freebusy)
         common = find_common_free_slots(busy_by_person, start, end, duration_minutes,
                                         (working_hours_start, working_hours_end), include_weekends, "Europe/Madrid")
-        formatted = [{
-            "day": s.astimezone(LOCAL_TZ).strftime("%A %d %B %Y"),
-            "start_time": s.astimezone(LOCAL_TZ).strftime("%H:%M"),
-            "end_time": e.astimezone(LOCAL_TZ).strftime("%H:%M"),
-            "iso_start": s.astimezone(LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S"),
-        } for s, e in common[:10]]
-        return {"success": True, "available_slots": formatted, "total_slots_found": len(common),
+        slot_delta = timedelta(minutes=duration_minutes)
+        formatted = []
+        for block_start, block_end in common:
+            current = block_start
+            while current + slot_delta <= block_end:
+                slot_end = current + slot_delta
+                formatted.append({
+                    "day": current.astimezone(LOCAL_TZ).strftime("%A %d %B %Y"),
+                    "start_time": current.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                    "end_time": slot_end.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                    "iso_start": current.astimezone(LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S"),
+                })
+                current += slot_delta
+        return {"success": True, "available_slots": formatted[:30], "total_slots_found": len(formatted),
                 "members": get_room_members(room_id), "timezone": "Europe/Madrid (CET)"}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -360,6 +368,14 @@ with st.sidebar:
             st.query_params.clear()
             st.rerun()
 
+    if st.button("🗑 Delete this room", use_container_width=True, type="secondary"):
+        delete_room(room_id)
+        st.session_state.room_id = None
+        st.session_state.messages = []
+        st.session_state.pending_room = None
+        st.query_params.clear()
+        st.rerun()
+
     st.markdown("""
         <div class="privacy-note">
             <span class="privacy-note-title">Privacy by Design</span>
@@ -395,20 +411,12 @@ components.html("""
 </script>
 """, height=0)
 
-st.markdown("---")
-
-# Input form at the bottom
-st.markdown('<div class="section-label">Ask the Scheduler</div>', unsafe_allow_html=True)
-with st.form(key="agent_form", clear_on_submit=True):
-    prompt = st.text_input("Your request", placeholder="e.g. find 30 minutes this week",
-                           label_visibility="collapsed")
-    submitted = st.form_submit_button("Send")
-if submitted and prompt:
+if prompt := st.chat_input("e.g. find all 30-minute slots this week"):
     full_prompt = f"Room members: {members}\n\nUser request: {prompt}"
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.spinner("Analyzing calendars..."):
         try:
-            answer = st.session_state.chat.send_message(full_prompt).text
+            answer = st.session_state.chat.send_message(full_prompt).text or "No response."
         except Exception as e:
             answer = f"Error: {e}"
     st.session_state.messages.append({"role": "assistant", "content": answer})

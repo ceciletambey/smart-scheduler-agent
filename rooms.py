@@ -112,6 +112,12 @@ def remove_member(room_id: str, email: str):
     sb = _get_supabase()
     sb.table("members").delete().eq("room_id", room_id).eq("email", email).execute()
 
+def delete_room(room_id: str):
+    """Delete a room and all its members."""
+    sb = _get_supabase()
+    sb.table("members").delete().eq("room_id", room_id).execute()
+    sb.table("rooms").delete().eq("id", room_id).execute()
+
 def get_rooms_for_email(email: str) -> list[dict]:
     """Return all rooms a given email is a member of, with room names."""
     sb = _get_supabase()
