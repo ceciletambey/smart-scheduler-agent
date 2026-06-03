@@ -117,6 +117,11 @@ hr { border-color: #1f1f1f !important; }
     font-size: 0.7rem; font-weight: 700; display: block; margin-bottom: 0.75rem; font-family: 'JetBrains Mono', monospace; }
 section[data-testid="stSidebar"] > div { overflow-y: auto !important; max-height: 100vh !important; }
 [data-testid="stChatMessage"] { margin-bottom: 0.75rem !important; }
+[data-testid="stChatInput"] { background-color: #0f0f0f !important; border: 1px solid #2a2a2a !important; border-radius: 8px !important; }
+[data-testid="stChatInput"] textarea { background-color: #0f0f0f !important; color: #fff !important; }
+[data-testid="stChatInput"] textarea::placeholder { color: #555 !important; }
+[data-testid="stChatInputSubmitButton"] button { background: linear-gradient(135deg, #ff0055, #ff3377) !important; border: none !important; }
+div[data-testid="stBottom"] { background-color: #000 !important; border-top: 1px solid #1f1f1f !important; }
 </style>
 """, unsafe_allow_html=True)
 
