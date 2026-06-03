@@ -12,8 +12,8 @@ from rooms import get_room_members, get_member_credentials
 
 def get_freebusy(room_id: str, start_time: datetime, end_time: datetime) -> dict:
     """
-    Query free/busy for all members of a room, each using their own credentials.
-    Privacy-preserving: only busy/free ranges, never event details.
+    Query free/busy for all members across ALL their calendars (primary +
+    subscribed calendars like school/work), then merge into one busy list per person.
     """
     emails = get_room_members(room_id)
     result = {}
@@ -22,13 +22,28 @@ def get_freebusy(room_id: str, start_time: datetime, end_time: datetime) -> dict
         try:
             creds = get_member_credentials(room_id, email)
             service = build("calendar", "v3", credentials=creds)
+
+            # Get all calendar IDs this user has
+            cal_list = service.calendarList().list().execute()
+            cal_ids = [c["id"] for c in cal_list.get("items", [])
+                       if c.get("accessRole") in ("owner", "writer", "reader")]
+            if not cal_ids:
+                cal_ids = [email]
+
             body = {
                 "timeMin": start_time.isoformat().replace("+00:00", "Z"),
                 "timeMax": end_time.isoformat().replace("+00:00", "Z"),
-                "items": [{"id": email}],
+                "items": [{"id": cid} for cid in cal_ids],
             }
             response = service.freebusy().query(body=body).execute()
-            result[email] = response["calendars"][email]
+
+            # Merge busy slots from all calendars into one list
+            merged_busy = []
+            for cid in cal_ids:
+                cal_data = response.get("calendars", {}).get(cid, {})
+                merged_busy.extend(cal_data.get("busy", []))
+
+            result[email] = {"busy": merged_busy}
         except Exception as e:
             result[email] = {"busy": [], "errors": [{"reason": str(e)}]}
 
