@@ -202,13 +202,35 @@ if "code" in st.query_params:
 
 def find_meeting_slots(duration_minutes: int = 60, days_ahead: int = 7,
                        working_hours_start: int = 9, working_hours_end: int = 18,
-                       include_weekends: bool = False) -> dict:
-    """Find common free slots between all members of the current room."""
+                       include_weekends: bool = False,
+                       search_start_date: str = "", search_end_date: str = "") -> dict:
+    """Find common free slots between all members of the current room.
+
+    Args:
+        duration_minutes: desired meeting length in minutes (default 60)
+        days_ahead: days to search from now when no specific dates are given (default 7)
+        working_hours_start: start of working hours 0-23 (default 9)
+        working_hours_end: end of working hours 0-23 (default 18)
+        include_weekends: include Saturday/Sunday (default False)
+        search_start_date: ISO date YYYY-MM-DD to start from (overrides days_ahead when set)
+        search_end_date: ISO date YYYY-MM-DD to end on, inclusive (used with search_start_date)
+    """
     room_id = st.session_state.room_id
-    now = datetime.now(timezone.utc)
-    minutes_to_add = (15 - now.minute % 15) % 15
-    start = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
-    end = start + timedelta(days=days_ahead)
+    if search_start_date:
+        start = LOCAL_TZ.localize(
+            datetime.strptime(search_start_date, "%Y-%m-%d")
+        ).astimezone(timezone.utc)
+        if search_end_date:
+            end = LOCAL_TZ.localize(
+                datetime.strptime(search_end_date, "%Y-%m-%d").replace(hour=23, minute=59)
+            ).astimezone(timezone.utc)
+        else:
+            end = start + timedelta(days=1)
+    else:
+        now = datetime.now(timezone.utc)
+        minutes_to_add = (15 - now.minute % 15) % 15
+        start = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        end = start + timedelta(days=days_ahead)
     try:
         freebusy = get_freebusy(room_id, start, end)
         busy_by_person = parse_busy_slots(freebusy)
@@ -240,26 +262,48 @@ def schedule_meeting(organizer_email: str, attendee_emails: list[str], title: st
                         title, start_iso, duration_minutes, True)
 
 
-SYSTEM_PROMPT = """You are an executive scheduling assistant for a team room.
+def get_system_prompt() -> str:
+    today = datetime.now(LOCAL_TZ)
+    today_str = today.strftime("%A %d %B %Y")
+
+    # This week: Monday to Friday (or today if mid-week)
+    this_monday = today - timedelta(days=today.weekday())
+    this_friday = this_monday + timedelta(days=4)
+
+    # Next week: next Monday to Friday
+    days_to_next_monday = 7 - today.weekday()
+    next_monday = today + timedelta(days=days_to_next_monday)
+    next_friday = next_monday + timedelta(days=4)
+
+    tomorrow = today + timedelta(days=1)
+
+    fmt = "%Y-%m-%d"
+    return f"""You are an executive scheduling assistant for a team room.
+
+Today is {today_str}.
 
 Tools:
-1. find_meeting_slots - finds common free time among room members (free/busy only)
-2. schedule_meeting - creates an event, invites attendees, adds Google Meet
+1. find_meeting_slots - finds common free time among room members
+2. schedule_meeting - creates an event with Google Meet and invites attendees
 
-The room members are provided in the user's message. Use them as attendees.
-For schedule_meeting, organizer_email = first member unless told otherwise,
-and use iso_start from the chosen slot.
+CRITICAL DATE RULES — always compute real calendar dates and pass them as search_start_date / search_end_date (format YYYY-MM-DD):
+- "next week"                      → search_start_date="{next_monday.strftime(fmt)}", search_end_date="{next_friday.strftime(fmt)}"
+- "this week"                      → search_start_date="{today.strftime(fmt)}", search_end_date="{this_friday.strftime(fmt)}"
+- "tomorrow"                       → search_start_date="{tomorrow.strftime(fmt)}", search_end_date="{tomorrow.strftime(fmt)}"
+- "from [date A] to [date B]"      → compute A and B as YYYY-MM-DD, pass as search_start_date / search_end_date
+- "Monday 8th", "June 15", etc.    → compute the ISO date, pass as both search_start_date and search_end_date
+- "next Monday to Wednesday"        → search_start_date="{next_monday.strftime(fmt)}", search_end_date="{(next_monday + timedelta(days=2)).strftime(fmt)}"
+- Only omit search_start_date when the user gives NO date hint at all (falls back to days_ahead=7 from now).
 
-TIME MAPPING: tomorrow->1, this week->7, next week->14, this month->30 days.
-morning->9-12, afternoon->13-18, evening->16-20. weekend->include_weekends=True.
+TIME OF DAY: morning→working_hours_start=9, working_hours_end=12 | afternoon→13-18 | evening→16-20 | weekend→include_weekends=True.
 
-After booking, share the Google Meet link. Be concise, executive-tone.
-Times are Central European Time.
-ALWAYS format available slots as a markdown bullet list, one slot per line, like this:
-- **Thursday 4 June** — from 09:00 to 10:00
-- **Thursday 4 June** — from 10:00 to 11:00
-- **Friday 5 June** — from 09:00 to 10:00
-Never put multiple slots on the same line.
+For schedule_meeting: organizer_email = first room member unless told otherwise; use iso_start from the chosen slot.
+
+After booking, always share the Google Meet link. Be concise, executive-tone. All times are CET (Europe/Madrid).
+ALWAYS format available slots as a markdown bullet list, one slot per line:
+- **Monday 8 June** — from 09:00 to 10:00
+- **Monday 8 June** — from 10:00 to 11:00
+Never put multiple slots on one line.
 """
 
 
@@ -267,7 +311,7 @@ def build_chat():
     return client.chats.create(
         model="gemini-2.5-flash",
         config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=get_system_prompt(),
             tools=[find_meeting_slots, schedule_meeting],
         ),
     )

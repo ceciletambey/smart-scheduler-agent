@@ -101,7 +101,10 @@ def get_member_credentials(room_id: str, email: str) -> Credentials:
     token_data = json.loads(result.data[0]["token_json"])
     scopes = token_data.get("scopes", [
         "https://www.googleapis.com/auth/calendar.freebusy",
+        "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "openid",
     ])
     return Credentials.from_authorized_user_info(token_data, scopes)
 

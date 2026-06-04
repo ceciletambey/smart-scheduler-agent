@@ -1,563 +1,580 @@
-"""
-Smart Scheduler Web App.
-Premium consulting-style interface for the multi-user scheduling agent.
-Supports finding common availability AND booking meetings with Google Meet.
-"""
-
 import os
 from datetime import datetime, timedelta, timezone
 import pytz
 import streamlit as st
-import google.generativeai as genai
-from dotenv import load_dotenv
+import streamlit.components.v1 as components
+from google import genai
+from google.genai import types
 
-from calendar_client import (
-    authenticate_user,
-    get_freebusy,
-    list_authenticated_users,
-    create_event,
-    _token_path,
+from oauth_web import (
+    get_authorization_url,
+    exchange_code_for_credentials,
+    get_user_email_from_credentials,
 )
+from rooms import (
+    create_room,
+    room_exists,
+    get_room_name,
+    add_member,
+    get_room_members,
+    remove_member,
+    delete_room,
+    get_rooms_for_email,
+)
+from calendar_client import get_freebusy, create_event
 from scheduler import parse_busy_slots, find_common_free_slots
 
-
+from dotenv import load_dotenv
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_KEY:
+    try:
+        GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        GEMINI_KEY = None
 
+if not GEMINI_KEY:
+    st.error("**Missing GEMINI_API_KEY** — add it to your Streamlit secrets (Settings → Secrets).")
+    st.stop()
+
+client = genai.Client(api_key=GEMINI_KEY)
 LOCAL_TZ = pytz.timezone("Europe/Madrid")
 
-
-st.set_page_config(
-    page_title="Smart Scheduler",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Smart Scheduler", layout="wide", initial_sidebar_state="expanded")
 
 
 # ============================================================
-# Premium consulting-style CSS
+# CSS
 # ============================================================
 
-CUSTOM_CSS = """
+st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+html, body, [class*="css"], .stApp, .main { font-family: 'Inter', sans-serif !important;
+    background-color: #000 !important; color: #fff !important; }
+.stApp { background: linear-gradient(180deg, #000 0%, #0a0a0a 100%); }
+[data-testid="stAppViewContainer"], [data-testid="stMain"], .main .block-container {
+    background-color: transparent !important; }
 
-html, body, [class*="css"], .stApp, .main {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
-    background-color: #000000 !important;
-    color: #ffffff !important;
-}
+/* Hide clutter */
+#MainMenu, footer, .stDeployButton, [data-testid="stToolbar"] { display: none !important; }
+[data-testid="stHeader"] { background: transparent !important; }
 
-.stApp { background: linear-gradient(180deg, #000000 0%, #0a0a0a 100%); }
-
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"],
-[data-testid="stMainBlockContainer"],
-[data-testid="stHeader"],
-.main .block-container { background-color: transparent !important; }
-
-#MainMenu, footer, header,
-[data-testid="stHeader"],
-[data-testid="stToolbar"],
-.stDeployButton,
-button[kind="header"] { display: none !important; }
-
-h1 {
-    font-size: 3.5rem !important;
-    font-weight: 800 !important;
-    color: #ffffff !important;
-    letter-spacing: -0.04em !important;
-    line-height: 1 !important;
-    margin: 0 !important;
-}
-
-h2, h3, h4 { color: #ffffff !important; font-weight: 700 !important; letter-spacing: -0.02em !important; }
-p, span, div, label { color: #e5e5e5 !important; }
-
-.main .block-container { padding: 3rem 4rem !important; max-width: 1400px !important; }
-
+/* Lock the sidebar always open and make it scrollable */
 section[data-testid="stSidebar"] {
-    background-color: #050505 !important;
-    border-right: 1px solid #1f1f1f !important;
-}
-section[data-testid="stSidebar"] > div { padding: 1.5rem !important; }
+    transform: none !important; visibility: visible !important;
+    min-width: 300px !important; width: 300px !important; margin-left: 0 !important; }
+section[data-testid="stSidebar"][aria-expanded="false"] {
+    transform: none !important; margin-left: 0 !important; }
+section[data-testid="stSidebar"] > div {
+    padding: 1.5rem !important; overflow-y: auto !important; max-height: 100vh !important; }
+[data-testid="stSidebarCollapseButton"] { display: none !important; }
 
-.brand-line {
-    height: 3px; width: 48px;
-    background: linear-gradient(90deg, #ff0055 0%, #ff3377 100%);
-    margin-bottom: 1.5rem; border-radius: 2px;
-}
-.brand-line-small {
-    height: 2px; width: 32px; background: #ff0055;
-    margin-bottom: 1rem; border-radius: 1px;
-}
-
-.section-label {
-    color: #ff0055 !important; font-size: 0.7rem !important;
-    text-transform: uppercase !important; letter-spacing: 0.2em !important;
-    font-weight: 700 !important; margin-bottom: 1rem !important;
-    font-family: 'JetBrains Mono', monospace !important;
-}
-
-.tagline {
-    color: #a0a0a0 !important; font-size: 1.125rem !important;
-    font-weight: 400 !important; line-height: 1.6 !important;
-    margin: 1.5rem 0 0 0 !important; max-width: 720px !important;
-}
-
-.participant-card {
-    background: linear-gradient(135deg, #141414 0%, #0f0f0f 100%);
-    border: 1px solid #2a2a2a; border-left: 3px solid #ff0055;
-    padding: 14px 18px; margin-bottom: 10px; border-radius: 6px;
-    font-size: 0.875rem; color: #ffffff !important; font-weight: 500;
-    font-family: 'JetBrains Mono', monospace; word-break: break-all;
-    transition: all 0.2s ease;
-}
-.participant-card:hover { border-color: #ff0055; }
-
-.participant-card-empty {
-    background-color: #0a0a0a; border: 1px dashed #2a2a2a;
-    padding: 24px; border-radius: 6px; color: #666666 !important;
-    font-size: 0.875rem; text-align: center;
-}
-
-.stButton > button {
-    background: linear-gradient(135deg, #ff0055 0%, #ff3377 100%) !important;
-    color: #ffffff !important; border: none !important; border-radius: 6px !important;
-    font-weight: 600 !important; font-size: 0.875rem !important;
-    letter-spacing: 0.02em !important; padding: 0.75rem 1.25rem !important;
-    transition: all 0.2s ease !important;
-    box-shadow: 0 2px 12px rgba(255, 0, 85, 0.25) !important;
-}
-.stButton > button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 20px rgba(255, 0, 85, 0.4) !important;
-}
-
-button[kind="secondary"] {
-    background: transparent !important; color: #666666 !important;
-    border: 1px solid #2a2a2a !important; box-shadow: none !important;
-}
-button[kind="secondary"]:hover {
-    border-color: #ff0055 !important; color: #ff0055 !important;
-    background: rgba(255, 0, 85, 0.08) !important;
-}
-
-.stTextInput > div > div > input {
-    background-color: #0f0f0f !important; color: #ffffff !important;
-    border: 1px solid #2a2a2a !important; border-radius: 6px !important;
-    padding: 0.75rem 1rem !important;
-    font-family: 'JetBrains Mono', monospace !important; font-size: 0.875rem !important;
-}
-.stTextInput > div > div > input:focus {
-    border-color: #ff0055 !important;
-    box-shadow: 0 0 0 3px rgba(255, 0, 85, 0.1) !important;
-}
-.stTextInput > div > div > input::placeholder { color: #444444 !important; }
-
-[data-testid="stBottomBlockContainer"],
-[data-testid="stBottom"],
-.stBottom,
-section[data-testid="stChatInputContainer"] {
-    background-color: #000000 !important; border-top: 1px solid #1f1f1f !important;
-}
-[data-testid="stChatInput"], .stChatInput {
-    background-color: #000000 !important; padding: 1rem 0 !important;
-}
-[data-testid="stChatInput"] > div, .stChatInput > div {
-    background-color: #0f0f0f !important; border: 1px solid #2a2a2a !important;
-    border-radius: 8px !important;
-}
-[data-testid="stChatInput"] textarea, .stChatInput textarea {
-    background-color: #0f0f0f !important; color: #ffffff !important;
-    border: none !important; font-family: 'Inter', sans-serif !important;
-    font-size: 0.95rem !important; padding: 0.875rem 1rem !important;
-}
-[data-testid="stChatInput"] textarea:focus { outline: none !important; box-shadow: none !important; }
-[data-testid="stChatInput"] textarea::placeholder { color: #555555 !important; }
-div[data-baseweb="textarea"] { background-color: #0f0f0f !important; border-radius: 8px !important; }
-[data-testid="stChatInput"] button {
-    background: linear-gradient(135deg, #ff0055 0%, #ff3377 100%) !important;
-    border-radius: 6px !important; margin-right: 0.5rem !important;
-}
-[data-testid="stChatInput"] button svg { fill: #ffffff !important; }
-
-[data-testid="stChatMessage"] {
-    background-color: #0a0a0a !important; border: 1px solid #1f1f1f !important;
-    border-radius: 8px !important; padding: 1.25rem 1.5rem !important;
-    margin-bottom: 1rem !important;
-}
-[data-testid="stChatMessage"] p, [data-testid="stChatMessage"] li {
-    color: #f0f0f0 !important; line-height: 1.7 !important;
-}
-[data-testid="stChatMessage"] strong { color: #ff3377 !important; font-weight: 600 !important; }
+h1 { font-size: 3.5rem !important; font-weight: 800 !important; color: #fff !important;
+    letter-spacing: -0.04em !important; line-height: 1 !important; margin: 0 !important; }
+h2, h3 { color: #fff !important; font-weight: 700 !important; }
+p, span, div, label { color: #e5e5e5 !important; }
+.main .block-container { padding: 3rem 4rem !important; max-width: 1400px !important; }
+section[data-testid="stSidebar"] { background-color: #050505 !important; border-right: 1px solid #1f1f1f !important; }
+.brand-line { height: 3px; width: 48px; background: linear-gradient(90deg, #ff0055, #ff3377);
+    margin-bottom: 1.5rem; border-radius: 2px; }
+.brand-line-small { height: 2px; width: 32px; background: #ff0055; margin-bottom: 1rem; border-radius: 1px; }
+.section-label { color: #ff0055 !important; font-size: 0.7rem !important; text-transform: uppercase !important;
+    letter-spacing: 0.2em !important; font-weight: 700 !important; margin-bottom: 1rem !important;
+    font-family: 'JetBrains Mono', monospace !important; }
+.tagline { color: #a0a0a0 !important; font-size: 1.125rem !important; line-height: 1.6 !important;
+    margin: 1.5rem 0 0 0 !important; max-width: 720px !important; }
+.participant-card { background: linear-gradient(135deg, #141414, #0f0f0f); border: 1px solid #2a2a2a;
+    border-left: 3px solid #ff0055; padding: 14px 18px; margin-bottom: 10px; border-radius: 6px;
+    font-size: 0.875rem; color: #fff !important; font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+.participant-card-empty { background-color: #0a0a0a; border: 1px dashed #2a2a2a; padding: 24px;
+    border-radius: 6px; color: #666 !important; text-align: center; font-size: 0.875rem; }
+.room-code { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700;
+    color: #ff0055 !important; letter-spacing: 0.1em; background: #0f0f0f; border: 1px solid #2a2a2a;
+    border-radius: 8px; padding: 1rem; text-align: center; margin: 1rem 0; }
+.stButton > button { background: linear-gradient(135deg, #ff0055, #ff3377) !important; color: #fff !important;
+    border: none !important; border-radius: 6px !important; font-weight: 600 !important;
+    padding: 0.65rem 1rem !important; box-shadow: 0 2px 12px rgba(255,0,85,0.2) !important; }
+.stButton > button:hover { transform: translateY(-1px) !important; }
+.stForm { border: none !important; padding: 0 !important; }
+.stTextInput > div > div > input { background-color: #0f0f0f !important; color: #fff !important;
+    border: 1px solid #2a2a2a !important; border-radius: 6px !important; font-family: 'JetBrains Mono', monospace !important; }
+[data-testid="stChatMessage"] { background-color: #0a0a0a !important; border: 1px solid #1f1f1f !important;
+    border-radius: 8px !important; padding: 1.25rem 1.5rem !important; }
+[data-testid="stChatMessage"] strong { color: #ff3377 !important; }
 [data-testid="stChatMessage"] a { color: #ff3377 !important; }
-
-.stAlert {
-    background-color: #0f0f0f !important; border: 1px solid #2a2a2a !important;
-    border-left: 3px solid #ff0055 !important; border-radius: 6px !important;
-    color: #ffffff !important;
-}
-.stAlert p { color: #ffffff !important; }
-
-hr { border-color: #1f1f1f !important; margin: 2.5rem 0 !important; }
-section[data-testid="stSidebar"] hr { margin: 1.5rem 0 !important; }
-
-.privacy-note {
-    background: linear-gradient(135deg, #0a0a0a 0%, #050505 100%);
-    border: 1px solid #1f1f1f; padding: 1.25rem; border-radius: 8px;
-    color: #888888 !important; font-size: 0.8rem; line-height: 1.7; margin-top: 1rem;
-}
-.privacy-note-title {
-    color: #ff0055 !important; text-transform: uppercase; letter-spacing: 0.15em;
-    font-size: 0.7rem; font-weight: 700; display: block; margin-bottom: 0.75rem;
-    font-family: 'JetBrains Mono', monospace;
-}
-
-.empty-state {
-    text-align: center; padding: 6rem 2rem; color: #666666;
-    border: 1px dashed #1f1f1f; border-radius: 12px; background: #050505; margin-top: 2rem;
-}
-.empty-state-icon {
-    width: 64px; height: 64px; margin: 0 auto 1.5rem auto;
-    border: 2px solid #2a2a2a; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    color: #ff0055; font-size: 1.5rem; font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-}
-.empty-state-title {
-    color: #ffffff !important; font-size: 1.5rem !important;
-    font-weight: 700 !important; margin-bottom: 0.75rem !important;
-}
-.empty-state-text {
-    color: #888888 !important; font-size: 1rem !important;
-    max-width: 480px; margin: 0 auto; line-height: 1.6 !important;
-}
-
-.status-badge {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 6px 14px; background: rgba(255, 0, 85, 0.1);
-    border: 1px solid rgba(255, 0, 85, 0.3); border-radius: 100px;
-    color: #ff3377 !important; font-size: 0.75rem; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.1em;
-    font-family: 'JetBrains Mono', monospace; margin-bottom: 1.5rem;
-}
-.status-dot {
-    width: 6px; height: 6px; background: #ff0055; border-radius: 50%;
-    animation: pulse 2s infinite;
-}
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-.stSpinner > div { border-top-color: #ff0055 !important; }
-
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #050505; }
-::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #ff0055; }
-
-code {
-    background-color: #1a1a1a !important; color: #ff3377 !important;
-    padding: 0.2rem 0.4rem !important; border-radius: 4px !important;
-    font-family: 'JetBrains Mono', monospace !important; font-size: 0.875rem !important;
-}
+.stAlert { background-color: #0f0f0f !important; border-left: 3px solid #ff0055 !important; color: #fff !important; }
+hr { border-color: #1f1f1f !important; }
+.connect-btn a { display: inline-block; background: linear-gradient(135deg, #ff0055, #ff3377);
+    color: #fff !important; padding: 0.75rem 1.5rem; border-radius: 8px; text-decoration: none !important;
+    font-weight: 600; width: 100%; text-align: center; box-sizing: border-box; }
+.connect-btn-big a { display: inline-block; background: linear-gradient(135deg, #ff0055, #ff3377);
+    color: #fff !important; padding: 1rem 2rem; border-radius: 10px; text-decoration: none !important;
+    font-weight: 700; font-size: 1.05rem; text-align: center; box-shadow: 0 4px 20px rgba(255,0,85,0.3); }
+.privacy-note { background: #0a0a0a; border: 1px solid #1f1f1f; padding: 1.25rem; border-radius: 8px;
+    color: #888 !important; font-size: 0.8rem; line-height: 1.7; margin-top: 1rem; }
+.privacy-note-title { color: #ff0055 !important; text-transform: uppercase; letter-spacing: 0.15em;
+    font-size: 0.7rem; font-weight: 700; display: block; margin-bottom: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+section[data-testid="stSidebar"] > div { overflow-y: auto !important; max-height: 100vh !important; }
+[data-testid="stChatMessage"] { margin-bottom: 0.75rem !important; }
+div[data-testid="stBottom"],
+div[data-testid="stBottom"] > div,
+div[data-testid="stBottom"] > div > div { background-color: #000 !important; border-top: 1px solid #1f1f1f !important; }
+[data-testid="stChatInput"],
+[data-testid="stChatInput"] > div,
+[data-testid="stChatInput"] > div > div { background-color: #0f0f0f !important; border: 1px solid #2a2a2a !important; border-radius: 8px !important; }
+[data-testid="stChatInput"] textarea { background-color: #0f0f0f !important; color: #fff !important; caret-color: #fff !important; }
+[data-testid="stChatInput"] textarea::placeholder { color: #555 !important; }
+[data-testid="stChatInputSubmitButton"] button { background: linear-gradient(135deg, #ff0055, #ff3377) !important; border: none !important; color: #fff !important; }
 </style>
-"""
-
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
-
-# ============================================================
-# TOOLS
-# ============================================================
-
-def find_meeting_slots(
-    attendee_emails: list[str],
-    duration_minutes: int = 60,
-    days_ahead: int = 7,
-    working_hours_start: int = 9,
-    working_hours_end: int = 18,
-    include_weekends: bool = False,
-) -> dict:
-    """
-    Find common free time slots where all attendees are available.
-    Privacy-preserving: only uses free/busy data, never event details.
-
-    Args:
-        attendee_emails: list of participant emails
-        duration_minutes: desired meeting duration (default 60)
-        days_ahead: how many days ahead to search (default 7)
-        working_hours_start: start hour in local time (default 9)
-        working_hours_end: end hour in local time (default 18)
-        include_weekends: include Saturday/Sunday (default False)
-    """
-# Round up to the next clean 15-minute mark so slots align to :00/:15/:30/:45
-    now = datetime.now(timezone.utc)
-    minutes_to_add = (15 - now.minute % 15) % 15
-    start = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
-    if minutes_to_add == 0 and now.second > 0:
-        start += timedelta(minutes=15)
-    end = start + timedelta(days=days_ahead)
-
-    try:
-        freebusy = get_freebusy(attendee_emails, start, end)
-        busy_by_person = parse_busy_slots(freebusy)
-        common_slots = find_common_free_slots(
-            busy_by_person,
-            search_start=start,
-            search_end=end,
-            duration_minutes=duration_minutes,
-            working_hours=(working_hours_start, working_hours_end),
-            include_weekends=include_weekends,
-            timezone_name="Europe/Madrid",
-        )
-        formatted = [
-            {
-                "day": s.astimezone(LOCAL_TZ).strftime("%A %d %B %Y"),
-                "start_time": s.astimezone(LOCAL_TZ).strftime("%H:%M"),
-                "end_time": e.astimezone(LOCAL_TZ).strftime("%H:%M"),
-                "iso_start": s.astimezone(LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S"),
-                "duration_hours": round((e - s).total_seconds() / 3600, 1),
-            }
-            for s, e in common_slots[:10]
-        ]
-        return {
-            "success": True,
-            "attendees": attendee_emails,
-            "available_slots": formatted,
-            "total_slots_found": len(common_slots),
-            "timezone": "Europe/Madrid (CET)",
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-def schedule_meeting(
-    organizer_email: str,
-    attendee_emails: list[str],
-    title: str,
-    start_iso: str,
-    duration_minutes: int = 60,
-) -> dict:
-    """
-    Create and schedule a meeting in the organizer's calendar, inviting all
-    attendees and automatically adding a Google Meet video link.
-
-    Use this AFTER find_meeting_slots, once the user confirms which slot they want.
-
-    Args:
-        organizer_email: email of the meeting organizer (usually first participant)
-        attendee_emails: all participant emails to invite
-        title: the meeting title
-        start_iso: exact start time in ISO format, e.g. "2026-05-26T14:00:00"
-        duration_minutes: meeting length in minutes (default 60)
-    """
-    return create_event(
-        organizer_email=organizer_email,
-        attendee_emails=attendee_emails,
-        title=title,
-        start_iso=start_iso,
-        duration_minutes=duration_minutes,
-        add_google_meet=True,
-    )
-
-
-SYSTEM_PROMPT = """You are an executive scheduling assistant.
-
-You have two tools:
-1. find_meeting_slots — finds common free time between participants (privacy-preserving, free/busy only)
-2. schedule_meeting — creates a calendar event, invites attendees, and adds a Google Meet link
-
-WORKFLOW:
-- When the user wants to find availability, use find_meeting_slots
-- When the user confirms a specific slot and wants to book it, use schedule_meeting
-- Before scheduling, make sure you have: a chosen time slot, a title, and the participants
-- If the title is missing, suggest a sensible default or ask
-- The organizer_email is the first authenticated participant unless told otherwise
-- For schedule_meeting, use the iso_start value from the slot the user selected
-
-TIME CONSTRAINTS for find_meeting_slots:
-- "tomorrow" -> days_ahead=1
-- "this week" -> days_ahead=7
-- "next week" -> days_ahead=14
-- "this month" -> days_ahead=30
-- "morning" -> working_hours_start=9, working_hours_end=12
-- "afternoon" -> working_hours_start=13, working_hours_end=18
-- "evening" -> working_hours_start=16, working_hours_end=20
-- "weekend" -> include_weekends=True
-
-After creating an event, always share the Google Meet link and confirm who was invited.
-
-Be concise, professional, executive-tone. All times are Central European Time (Europe/Madrid).
-Format slots as a clean bulleted list with day and time range in bold.
-"""
-
-
-def build_chat():
-    """Create a fresh Gemini chat session with both tools."""
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=SYSTEM_PROMPT,
-        tools=[find_meeting_slots, schedule_meeting],
-    )
-    return model.start_chat(enable_automatic_function_calling=True)
+""", unsafe_allow_html=True)
 
 
 # ============================================================
 # Session state
 # ============================================================
 
-if "chat" not in st.session_state:
-    st.session_state.chat = build_chat()
+if "room_id" not in st.session_state:
+    st.session_state.room_id = None
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
+if "messages" not in st.session_state:
     st.session_state.messages = []
+if "pending_room" not in st.session_state:
+    st.session_state.pending_room = None
+if "confirm_delete" not in st.session_state:
+    st.session_state.confirm_delete = False
 
 
 # ============================================================
-# SIDEBAR
+# Stay connected: restore session from URL params
 # ============================================================
+
+if not st.session_state.current_user:
+    url_u = st.query_params.get("u", "")
+    url_r = st.query_params.get("room", "")
+    if url_u and url_r:
+        try:
+            if url_u in get_room_members(url_r):
+                st.session_state.current_user = url_u
+                st.session_state.room_id = url_r
+        except Exception:
+            pass
+
+
+# ============================================================
+# Read room from URL (store as pending until authenticated)
+# ============================================================
+
+url_room = st.query_params.get("room")
+if url_room and url_room != st.session_state.room_id and room_exists(url_room):
+    st.session_state.pending_room = url_room
+
+
+# ============================================================
+# Handle OAuth redirect
+# ============================================================
+
+if "code" in st.query_params:
+    code = st.query_params["code"]
+    state_room = st.query_params.get("state")
+    try:
+        creds = exchange_code_for_credentials(code)
+        email = get_user_email_from_credentials(creds)
+        st.session_state.current_user = email
+        if state_room and room_exists(state_room):
+            add_member(state_room, email, creds)
+            st.session_state.room_id = state_room
+            st.session_state.pending_room = None
+        st.query_params.clear()
+        if state_room:
+            st.query_params["room"] = state_room
+            st.query_params["u"] = email
+        st.rerun()
+    except Exception as e:
+        st.error(f"Authentication error: {e}")
+        st.query_params.clear()
+
+
+# ============================================================
+# Tools
+# ============================================================
+
+def find_meeting_slots(duration_minutes: int = 60, days_ahead: int = 7,
+                       working_hours_start: int = 9, working_hours_end: int = 18,
+                       include_weekends: bool = False,
+                       search_start_date: str = "", search_end_date: str = "") -> dict:
+    """Find common free slots between all members of the current room.
+
+    Args:
+        duration_minutes: desired meeting length in minutes (default 60)
+        days_ahead: days to search from now when no specific dates are given (default 7)
+        working_hours_start: start of working hours 0-23 (default 9)
+        working_hours_end: end of working hours 0-23 (default 18)
+        include_weekends: include Saturday/Sunday (default False)
+        search_start_date: ISO date YYYY-MM-DD to start from (overrides days_ahead when set)
+        search_end_date: ISO date YYYY-MM-DD to end on, inclusive (used with search_start_date)
+    """
+    room_id = st.session_state.room_id
+    if search_start_date:
+        start = LOCAL_TZ.localize(
+            datetime.strptime(search_start_date, "%Y-%m-%d")
+        ).astimezone(timezone.utc)
+        if search_end_date:
+            end = LOCAL_TZ.localize(
+                datetime.strptime(search_end_date, "%Y-%m-%d").replace(hour=23, minute=59)
+            ).astimezone(timezone.utc)
+        else:
+            end = start + timedelta(days=1)
+    else:
+        now = datetime.now(timezone.utc)
+        minutes_to_add = (15 - now.minute % 15) % 15
+        start = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        end = start + timedelta(days=days_ahead)
+    try:
+        freebusy = get_freebusy(room_id, start, end)
+        busy_by_person = parse_busy_slots(freebusy)
+        common = find_common_free_slots(busy_by_person, start, end, duration_minutes,
+                                        (working_hours_start, working_hours_end), include_weekends, "Europe/Madrid")
+        slot_delta = timedelta(minutes=duration_minutes)
+        formatted = []
+        for block_start, block_end in common:
+            current = block_start
+            while current + slot_delta <= block_end:
+                slot_end = current + slot_delta
+                formatted.append({
+                    "day": current.astimezone(LOCAL_TZ).strftime("%A %d %B %Y"),
+                    "start_time": current.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                    "end_time": slot_end.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                    "iso_start": current.astimezone(LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S"),
+                })
+                current += slot_delta
+        return {"success": True, "available_slots": formatted[:30], "total_slots_found": len(formatted),
+                "members": get_room_members(room_id), "timezone": "Europe/Madrid (CET)"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def schedule_meeting(organizer_email: str, attendee_emails: list[str], title: str,
+                     start_iso: str, duration_minutes: int = 60) -> dict:
+    """Create a meeting with a Google Meet link and invite attendees."""
+    return create_event(st.session_state.room_id, organizer_email, attendee_emails,
+                        title, start_iso, duration_minutes, True)
+
+
+def get_system_prompt() -> str:
+    today = datetime.now(LOCAL_TZ)
+    today_str = today.strftime("%A %d %B %Y")
+
+    # This week: Monday to Friday (or today if mid-week)
+    this_monday = today - timedelta(days=today.weekday())
+    this_friday = this_monday + timedelta(days=4)
+
+    # Next week: next Monday to Friday
+    days_to_next_monday = 7 - today.weekday()
+    next_monday = today + timedelta(days=days_to_next_monday)
+    next_friday = next_monday + timedelta(days=4)
+
+    tomorrow = today + timedelta(days=1)
+
+    fmt = "%Y-%m-%d"
+    return f"""You are an executive scheduling assistant for a team room.
+
+Today is {today_str}.
+
+Tools:
+1. find_meeting_slots - finds common free time among room members
+2. schedule_meeting - creates an event with Google Meet and invites attendees
+
+CRITICAL DATE RULES — always compute real calendar dates and pass them as search_start_date / search_end_date (format YYYY-MM-DD):
+- "next week"                      → search_start_date="{next_monday.strftime(fmt)}", search_end_date="{next_friday.strftime(fmt)}"
+- "this week"                      → search_start_date="{today.strftime(fmt)}", search_end_date="{this_friday.strftime(fmt)}"
+- "tomorrow"                       → search_start_date="{tomorrow.strftime(fmt)}", search_end_date="{tomorrow.strftime(fmt)}"
+- "from [date A] to [date B]"      → compute A and B as YYYY-MM-DD, pass as search_start_date / search_end_date
+- "Monday 8th", "June 15", etc.    → compute the ISO date, pass as both search_start_date and search_end_date
+- "next Monday to Wednesday"        → search_start_date="{next_monday.strftime(fmt)}", search_end_date="{(next_monday + timedelta(days=2)).strftime(fmt)}"
+- Only omit search_start_date when the user gives NO date hint at all (falls back to days_ahead=7 from now).
+
+TIME OF DAY: morning→working_hours_start=9, working_hours_end=12 | afternoon→13-18 | evening→16-20 | weekend→include_weekends=True.
+
+For schedule_meeting: organizer_email = first room member unless told otherwise; use iso_start from the chosen slot.
+
+After booking, always share the Google Meet link. Be concise, executive-tone. All times are CET (Europe/Madrid).
+ALWAYS format available slots as a markdown bullet list, one slot per line:
+- **Monday 8 June** — from 09:00 to 10:00
+- **Monday 8 June** — from 10:00 to 11:00
+Never put multiple slots on one line.
+"""
+
+
+def build_chat():
+    return client.chats.create(
+        model="gemini-2.5-flash",
+        config=types.GenerateContentConfig(
+            system_instruction=get_system_prompt(),
+            tools=[find_meeting_slots, schedule_meeting],
+        ),
+    )
+
+
+if "chat" not in st.session_state:
+    try:
+        st.session_state.chat = build_chat()
+    except Exception as e:
+        st.error(f"**Could not start Gemini chat:** {e}")
+        st.stop()
+
+
+# ============================================================
+# GATE: must be signed in to do anything (Option B)
+# ============================================================
+
+def render_landing():
+    """Landing page: sign in, then create or join a room."""
+    st.markdown('<div class="brand-line"></div>', unsafe_allow_html=True)
+    st.markdown("# Smart Scheduler")
+    st.markdown('<div class="tagline">Create a team room, invite participants, and let AI find '
+                'common availability across calendars - without exposing schedule details.</div>',
+                unsafe_allow_html=True)
+    st.markdown("---")
+
+    # If a room is pending (from a shared link), prompt to sign in to join it
+    if st.session_state.pending_room:
+        rid = st.session_state.pending_room
+        st.markdown('<div class="section-label">You were invited to a room</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="room-code">{rid}</div>', unsafe_allow_html=True)
+        st.caption(f"{get_room_name(rid)} - Sign in with Google to join this room.")
+        auth_url = get_authorization_url(rid)
+        st.markdown(f'<div class="connect-btn-big"><a href="{auth_url}" target="_top">🔑 Sign in with Google to join</a></div>', unsafe_allow_html=True)
+        st.markdown("---")
+        st.caption("Don't have a room yet?")
+        if st.button("Create your own room →", use_container_width=True):
+            st.session_state.pending_room = None
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
+
+    # Already signed in but no room — skip OAuth, go straight to create/join
+    if st.session_state.current_user:
+        st.markdown(f'<div class="section-label">Welcome back</div>', unsafe_allow_html=True)
+        st.caption(f"Signed in as {st.session_state.current_user} — create or join a room to continue.")
+    else:
+        st.markdown('<div class="section-label">Sign in to start</div>', unsafe_allow_html=True)
+        st.caption("You must sign in with your Google account to create or join a room. "
+                   "This is how the agent reads your availability (free/busy only).")
+
+    st.markdown("""
+<div style="display:flex;gap:2rem;margin:1.5rem 0 2rem 0;">
+  <div style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;border-top:3px solid #ff0055;padding:1.25rem;border-radius:8px;">
+    <div style="color:#ff0055;font-size:0.7rem;letter-spacing:0.2em;font-weight:700;margin-bottom:0.5rem;">01</div>
+    <div style="color:#fff;font-weight:600;margin-bottom:0.4rem;">Create a room</div>
+    <div style="color:#888;font-size:0.85rem;">Sign in with Google and get a shareable room code.</div>
+  </div>
+  <div style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;border-top:3px solid #ff0055;padding:1.25rem;border-radius:8px;">
+    <div style="color:#ff0055;font-size:0.7rem;letter-spacing:0.2em;font-weight:700;margin-bottom:0.5rem;">02</div>
+    <div style="color:#fff;font-weight:600;margin-bottom:0.4rem;">Invite your team</div>
+    <div style="color:#888;font-size:0.85rem;">Share the link. Each person signs in with their own Google account.</div>
+  </div>
+  <div style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;border-top:3px solid #ff0055;padding:1.25rem;border-radius:8px;">
+    <div style="color:#ff0055;font-size:0.7rem;letter-spacing:0.2em;font-weight:700;margin-bottom:0.5rem;">03</div>
+    <div style="color:#fff;font-weight:600;margin-bottom:0.4rem;">Ask the AI</div>
+    <div style="color:#888;font-size:0.85rem;">Ask for available slots. The agent checks everyone's calendar and books it.</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown('<div class="section-label">Create a Room</div>', unsafe_allow_html=True)
+        room_name = st.text_input("Room name", placeholder="e.g. Capstone Team", key="create_name")
+        btn_label = "Create Room" if st.session_state.current_user else "Create Room & Sign in"
+        if st.button(btn_label, use_container_width=True):
+            code = create_room(room_name or "Untitled")
+            if st.session_state.current_user:
+                # Already signed in — restore creds from Supabase aren't needed for room creation
+                # just set the room and redirect
+                st.session_state.room_id = code
+                st.query_params["room"] = code
+                st.query_params["u"] = st.session_state.current_user
+                st.rerun()
+            else:
+                auth_url = get_authorization_url(code)
+                st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
+                st.stop()
+
+    with col2:
+        st.markdown('<div class="section-label">Join a Room</div>', unsafe_allow_html=True)
+        join_code = st.text_input("Room code", placeholder="TEAM-XXXX", key="join_code")
+        btn_label2 = "Join Room" if st.session_state.current_user else "Join Room & Sign in"
+        if st.button(btn_label2, use_container_width=True):
+            jc = join_code.strip().upper()
+            if room_exists(jc):
+                if st.session_state.current_user:
+                    st.session_state.room_id = jc
+                    st.query_params["room"] = jc
+                    st.query_params["u"] = st.session_state.current_user
+                    st.rerun()
+                else:
+                    auth_url = get_authorization_url(jc)
+                    st.link_button("Continue to Google sign-in →", url=auth_url, use_container_width=True)
+                    st.stop()
+            else:
+                st.error("Room not found. Check the code.")
+    st.stop()
+
+
+# If the user is not signed in OR not in a room, show the landing gate
+if not st.session_state.current_user or not st.session_state.room_id:
+    render_landing()
+
+
+# ============================================================
+# INSIDE A ROOM (only reachable when signed in)
+# ============================================================
+
+room_id = st.session_state.room_id
+members = get_room_members(room_id)
 
 with st.sidebar:
     st.markdown('<div class="brand-line-small"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-label">Participants</div>', unsafe_allow_html=True)
 
-    authenticated = list_authenticated_users()
-
-    if authenticated:
-        st.markdown(
-            f'<div class="status-badge"><span class="status-dot"></span>'
-            f'{len(authenticated)} Connected</div>',
-            unsafe_allow_html=True,
-        )
-        for email in authenticated:
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                st.markdown(
-                    f'<div class="participant-card">{email}</div>',
-                    unsafe_allow_html=True,
-                )
-            with col2:
-                if st.button("×", key=f"remove_{email}", help="Disconnect"):
-                    token_file = _token_path(email)
-                    if os.path.exists(token_file):
-                        os.remove(token_file)
-                    st.rerun()
-    else:
-        st.markdown(
-            '<div class="participant-card-empty">No participants connected</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("---")
-    st.markdown('<div class="section-label">Add Participant</div>', unsafe_allow_html=True)
-
-    new_email = st.text_input(
-        "Email",
-        placeholder="name@domain.com",
-        key="new_email_input",
-        label_visibility="collapsed",
-    )
-
-    if st.button("Authenticate via Google", type="primary", use_container_width=True):
-        if not new_email:
-            st.warning("Email required")
-        elif "@" not in new_email:
-            st.warning("Invalid email format")
-        else:
-            with st.spinner("Opening browser..."):
-                try:
-                    authenticate_user(new_email)
-                    st.success(f"Connected: {new_email}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Authentication failed: {e}")
-
-    if authenticated:
-        if st.button("Clear conversation", type="secondary", use_container_width=True):
-            st.session_state.chat = build_chat()
+    # Email + logout on same row
+    em_col, lo_col = st.columns([3, 1])
+    with em_col:
+        st.caption(f"👤 {st.session_state.current_user}")
+    with lo_col:
+        if st.button("↩", help="Log out", use_container_width=True):
+            st.session_state.current_user = None
+            st.session_state.room_id = None
             st.session_state.messages = []
+            st.session_state.pending_room = None
+            st.session_state.confirm_delete = False
+            st.query_params.clear()
             st.rerun()
 
+    st.markdown('<div class="section-label">Your Rooms</div>', unsafe_allow_html=True)
+    my_rooms = get_rooms_for_email(st.session_state.current_user)
+    for r in my_rooms:
+        label = f"{r['id']} - {r.get('name') or 'Untitled'}"
+        if st.button(label, key=f"switch_{r['id']}", use_container_width=True):
+            st.session_state.room_id = r["id"]
+            st.session_state.messages = []
+            st.session_state.chat = build_chat()
+            st.query_params["room"] = r["id"]
+            st.query_params["u"] = st.session_state.current_user
+            st.rerun()
     st.markdown("---")
-    st.markdown(
-        """
+
+    st.markdown('<div class="section-label">Current Room</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="room-code">{room_id}</div>', unsafe_allow_html=True)
+    st.caption(f"{get_room_name(room_id)} - Share this code to invite others")
+
+    st.markdown('<div class="section-label">Members</div>', unsafe_allow_html=True)
+    if members:
+        for email in members:
+            c1, c2 = st.columns([5, 1])
+            with c1:
+                st.markdown(f'<div class="participant-card">{email}</div>', unsafe_allow_html=True)
+            with c2:
+                if st.button("x", key=f"rm_{email}"):
+                    remove_member(room_id, email)
+                    st.rerun()
+    else:
+        st.markdown('<div class="participant-card-empty">No members yet</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown('<div class="section-label">Invite Others</div>', unsafe_allow_html=True)
+    room_name = get_room_name(room_id)
+    app_url = "https://smart-scheduler-agent-gbgjyqricckdghcqwiwb8q.streamlit.app"
+    invite_link = f"{app_url}?room={room_id}"
+    invite_msg = f"Hey! Join our team room on Smart Scheduler 📅\nRoom: {room_name} • Code: {room_id}\n👉 {invite_link}"
+    st.code(invite_msg, language=None)
+    st.caption("Click the copy icon ↗ then paste in WhatsApp, email, etc.")
+
+    st.markdown("---")
+    if st.button("+ New room", use_container_width=True):
+        st.session_state.room_id = None
+        st.session_state.messages = []
+        st.session_state.pending_room = None
+        st.query_params.clear()
+        st.rerun()
+
+    if not st.session_state.confirm_delete:
+        if st.button("🗑 Delete this room", use_container_width=True, type="secondary"):
+            st.session_state.confirm_delete = True
+            st.rerun()
+    else:
+        st.warning("Delete **" + get_room_name(room_id) + "**? This cannot be undone.")
+        y, n = st.columns(2)
+        with y:
+            if st.button("Yes, delete", use_container_width=True, type="primary"):
+                delete_room(room_id)
+                st.session_state.confirm_delete = False
+                st.session_state.messages = []
+                st.session_state.pending_room = None
+                # Stay logged in — switch to another room if available
+                remaining = [r for r in get_rooms_for_email(st.session_state.current_user) if r["id"] != room_id]
+                if remaining:
+                    st.session_state.room_id = remaining[0]["id"]
+                    st.query_params["room"] = remaining[0]["id"]
+                    st.query_params["u"] = st.session_state.current_user
+                else:
+                    st.session_state.room_id = None
+                    st.query_params.clear()
+                    st.query_params["u"] = st.session_state.current_user
+                st.rerun()
+        with n:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.confirm_delete = False
+                st.rerun()
+
+    st.markdown("""
         <div class="privacy-note">
             <span class="privacy-note-title">Privacy by Design</span>
-            Availability is read via Google Calendar's freebusy endpoint, 
-            which exposes only busy/free ranges — never event titles, 
-            attendees, or descriptions. Event creation uses scoped permissions 
-            limited to the meetings this app books.
+            We only request the freebusy scope to read availability - never event
+            details. Each member authenticates with their own Google account.
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """, unsafe_allow_html=True)
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
+# Main area
 st.markdown('<div class="brand-line"></div>', unsafe_allow_html=True)
 st.markdown("# Smart Scheduler")
-st.markdown(
-    '<div class="tagline">An AI-powered scheduling agent that finds common '
-    'availability across multiple calendars and books meetings with video links — '
-    'without exposing personal schedule details.</div>',
-    unsafe_allow_html=True,
-)
-
+st.markdown(f'<div class="tagline">Room <strong>{room_id}</strong> · {len(members)} member(s) connected. '
+            'Ask the agent to find a time that works for everyone.</div>', unsafe_allow_html=True)
+# Keep URL in sync so stay-connected works on refresh
+if st.query_params.get("u") != st.session_state.current_user:
+    st.query_params["u"] = st.session_state.current_user
+if st.query_params.get("room") != room_id:
+    st.query_params["room"] = room_id
 st.markdown("---")
 
-if not authenticated:
-    st.markdown(
-        """
-        <div class="empty-state">
-            <div class="empty-state-icon">01</div>
-            <div class="empty-state-title">No active session</div>
-            <div class="empty-state-text">
-                Add at least two participants in the sidebar to begin. 
-                Each participant authenticates with their own Google account.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-else:
-    st.markdown(
-        f'<div class="section-label">Active Session · {len(authenticated)} Participants</div>',
-        unsafe_allow_html=True,
-    )
+# Chat history (newest at bottom, like a chat app)
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    if not st.session_state.messages:
-        st.markdown(
-            """
-            <div style="color: #666666; font-size: 0.9rem; padding: 1rem 0;">
-                Try: "Find 1 hour this week between everyone", then 
-                "Book the Monday slot at 2pm, title Project Sync"
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+# Auto-scroll to latest message after each rerun
+components.html("""
+<script>
+  var attempts = 0;
+  function scrollDown() {
+    var main = window.parent.document.querySelector('section.main');
+    if (main) { main.scrollTop = main.scrollHeight; }
+    attempts++;
+    if (attempts < 8) setTimeout(scrollDown, 100);
+  }
+  scrollDown();
+</script>
+""", height=0)
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    if prompt := st.chat_input("Describe the meeting you want to schedule..."):
-        full_prompt = (
-            f"Authenticated participants available: {authenticated}\n\n"
-            f"User request: {prompt}"
-        )
-
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing..."):
-                try:
-                    response = st.session_state.chat.send_message(full_prompt)
-                    answer = response.text
-                except Exception as e:
-                    answer = f"Error: {e}"
-            st.markdown(answer)
-
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+if prompt := st.chat_input("e.g. find all 30-minute slots this week"):
+    full_prompt = f"Room members: {members}\n\nUser request: {prompt}"
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.spinner("Analyzing calendars..."):
+        try:
+            answer = st.session_state.chat.send_message(full_prompt).text or "No response."
+        except Exception as e:
+            answer = f"Error: {e}"
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.rerun()

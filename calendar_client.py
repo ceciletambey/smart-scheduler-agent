@@ -1,7 +1,13 @@
 """
 Calendar client — room-aware version.
-Loads member credentials from Supabase (per room) and queries free/busy
+Loads member credentials from Supabase (per room) and queries busy times
 or creates events using each member's own OAuth token.
+
+Uses events.list() instead of the freebusy API so that subscribed calendars
+(university courses, work calendars from other Workspace domains) are included.
+The freebusy API silently returns empty busy arrays for those calendar IDs
+because it can't cross Workspace domain boundaries, even though the user's
+OAuth token can read those calendars directly.
 """
 
 from datetime import datetime, timedelta
@@ -12,36 +18,61 @@ from rooms import get_room_members, get_member_credentials
 
 def get_freebusy(room_id: str, start_time: datetime, end_time: datetime) -> dict:
     """
-    Query free/busy for all members across ALL their calendars (primary +
-    subscribed calendars like school/work), then merge into one busy list per person.
+    Query busy times for all members across ALL their calendars, including
+    subscribed calendars from other domains (university, work, etc.).
     """
     emails = get_room_members(room_id)
     result = {}
+
+    time_min = start_time.isoformat().replace("+00:00", "Z")
+    time_max = end_time.isoformat().replace("+00:00", "Z")
 
     for email in emails:
         try:
             creds = get_member_credentials(room_id, email)
             service = build("calendar", "v3", credentials=creds)
 
-            # Get all calendar IDs this user has
             cal_list = service.calendarList().list().execute()
-            cal_ids = [c["id"] for c in cal_list.get("items", [])
-                       if c.get("accessRole") in ("owner", "writer", "reader")]
+            cal_items = cal_list.get("items", [])
+            cal_ids = [
+                c["id"] for c in cal_items
+                if c.get("accessRole") in ("owner", "writer", "reader")
+                and not c.get("hidden", False)
+            ]
             if not cal_ids:
                 cal_ids = [email]
 
-            body = {
-                "timeMin": start_time.isoformat().replace("+00:00", "Z"),
-                "timeMax": end_time.isoformat().replace("+00:00", "Z"),
-                "items": [{"id": cid} for cid in cal_ids],
-            }
-            response = service.freebusy().query(body=body).execute()
-
-            # Merge busy slots from all calendars into one list
             merged_busy = []
             for cid in cal_ids:
-                cal_data = response.get("calendars", {}).get(cid, {})
-                merged_busy.extend(cal_data.get("busy", []))
+                try:
+                    events_result = service.events().list(
+                        calendarId=cid,
+                        timeMin=time_min,
+                        timeMax=time_max,
+                        singleEvents=True,
+                        orderBy="startTime",
+                        maxResults=250,
+                    ).execute()
+                    for event in events_result.get("items", []):
+                        if event.get("status") == "cancelled":
+                            continue
+                        if event.get("transparency") == "transparent":
+                            continue
+                        attendees = event.get("attendees", [])
+                        if any(
+                            a.get("self") and a.get("responseStatus") == "declined"
+                            for a in attendees
+                        ):
+                            continue
+                        start = event.get("start", {})
+                        end = event.get("end", {})
+                        start_str = start.get("dateTime") or start.get("date")
+                        end_str = end.get("dateTime") or end.get("date")
+                        # Skip all-day events (date-only strings have no "T")
+                        if start_str and end_str and "T" in str(start_str):
+                            merged_busy.append({"start": start_str, "end": end_str})
+                except Exception:
+                    pass  # Skip calendars we can't read events from
 
             result[email] = {"busy": merged_busy}
         except Exception as e:
