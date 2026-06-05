@@ -295,6 +295,9 @@ CRITICAL DATE RULES — always compute real calendar dates and pass them as sear
 - "next Monday to Wednesday"        → search_start_date="{next_monday.strftime(fmt)}", search_end_date="{(next_monday + timedelta(days=2)).strftime(fmt)}"
 - Only omit search_start_date when the user gives NO date hint at all (falls back to days_ahead=7 from now).
 
+DURATION: always pass the EXACT number the user says as duration_minutes. Never round it.
+- "20 min" → duration_minutes=20, "45 min" → duration_minutes=45, "1.5 hours" → duration_minutes=90, "2 hours" → duration_minutes=120.
+
 TIME OF DAY: morning→working_hours_start=9, working_hours_end=12 | afternoon→13-18 | evening→16-20 | weekend→include_weekends=True.
 
 For schedule_meeting: organizer_email = first room member unless told otherwise; use iso_start from the chosen slot.
